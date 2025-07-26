@@ -1,11 +1,14 @@
 import { Pool } from 'pg'
 
-// Create a connection pool
+// Create a connection pool with production optimizations
 const pool = new Pool({
   connectionString: process.env.POSTGRES_URL,
   ssl: {
     rejectUnauthorized: false
-  }
+  },
+  max: 20, // Maximum number of connections in the pool
+  idleTimeoutMillis: 30000, // Close idle connections after 30 seconds
+  connectionTimeoutMillis: 2000, // Return error after 2 seconds if connection could not be established
 })
 
 export interface UserGrid {
@@ -15,6 +18,30 @@ export interface UserGrid {
   intensity: number // 0-4
   created_at: Date
   updated_at: Date
+}
+
+interface DatabaseUserGrid {
+  id: string
+  user_id: string
+  date: string
+  intensity: string | number
+  created_at: string | Date
+  updated_at: string | Date
+}
+
+interface DatabaseUser {
+  id: string
+  email: string
+  name?: string
+  image?: string
+  created_at: string | Date
+  updated_at: string | Date
+}
+
+interface DatabaseStatsRow {
+  date: string
+  intensity: string | number
+  day_of_week: string | number
 }
 
 export interface UserStats {
@@ -71,7 +98,14 @@ export async function getUserGridData(userId: string, year: number): Promise<Use
       'SELECT * FROM user_grids WHERE user_id = $1 AND EXTRACT(YEAR FROM date) = $2 ORDER BY date',
       [userId, year]
     )
-    return result.rows as UserGrid[]
+    return result.rows.map((row: DatabaseUserGrid): UserGrid => ({
+      id: row.id,
+      user_id: row.user_id,
+      date: row.date,
+      intensity: typeof row.intensity === 'string' ? parseInt(row.intensity) : row.intensity,
+      created_at: new Date(row.created_at),
+      updated_at: new Date(row.updated_at)
+    }))
   } catch (error) {
     console.error('Error fetching user grid data:', error)
     throw error
@@ -87,7 +121,14 @@ export async function getUserGridDataByDateRange(userId: string, startDate: stri
       'SELECT * FROM user_grids WHERE user_id = $1 AND date BETWEEN $2 AND $3 ORDER BY date',
       [userId, startDate, endDate]
     )
-    return result.rows as UserGrid[]
+    return result.rows.map((row: DatabaseUserGrid): UserGrid => ({
+      id: row.id,
+      user_id: row.user_id,
+      date: row.date,
+      intensity: typeof row.intensity === 'string' ? parseInt(row.intensity) : row.intensity,
+      created_at: new Date(row.created_at),
+      updated_at: new Date(row.updated_at)
+    }))
   } catch (error) {
     console.error('Error fetching user grid data by date range:', error)
     throw error
@@ -109,7 +150,15 @@ export async function updateGridSquare(userId: string, date: string, intensity: 
        RETURNING *`,
       [userId, date, intensity]
     )
-    return result.rows[0] as UserGrid
+    const row: DatabaseUserGrid = result.rows[0]
+    return {
+      id: row.id,
+      user_id: row.user_id,
+      date: row.date,
+      intensity: typeof row.intensity === 'string' ? parseInt(row.intensity) : row.intensity,
+      created_at: new Date(row.created_at),
+      updated_at: new Date(row.updated_at)
+    }
   } catch (error) {
     console.error('Error updating grid square:', error)
     throw error
@@ -135,7 +184,7 @@ export async function getUserStats(userId: string, year: number): Promise<UserSt
       [userId, year]
     )
 
-    const sickDays = yearData.rows
+    const sickDays: DatabaseStatsRow[] = yearData.rows
     const totalSickDays = sickDays.length
     
     // Calculate percentage of year (365 or 366 days)
@@ -146,7 +195,7 @@ export async function getUserStats(userId: string, year: number): Promise<UserSt
     // Find most common day of week
     const dayCount: { [key: number]: number } = {}
     sickDays.forEach(day => {
-      const dow = parseInt(day.day_of_week)
+      const dow = typeof day.day_of_week === 'string' ? parseInt(day.day_of_week) : day.day_of_week
       dayCount[dow] = (dayCount[dow] || 0) + 1
     })
 
@@ -193,7 +242,10 @@ export async function getUserStats(userId: string, year: number): Promise<UserSt
     longestStreak = Math.max(longestStreak, tempStreak)
 
     // Calculate average intensity
-    const totalIntensity = sickDays.reduce((sum, day) => sum + parseInt(day.intensity), 0)
+    const totalIntensity = sickDays.reduce((sum, day) => {
+      const intensity = typeof day.intensity === 'string' ? parseInt(day.intensity) : day.intensity
+      return sum + intensity
+    }, 0)
     const averageIntensity = totalSickDays > 0 ? totalIntensity / totalSickDays : 0
 
     return {
@@ -241,7 +293,7 @@ export async function getUserStatsByDateRange(userId: string, startDate: string,
     // Find most common day of week
     const dayCount: { [key: number]: number } = {}
     sickDays.forEach(day => {
-      const dow = parseInt(day.day_of_week)
+      const dow = typeof day.day_of_week === 'string' ? parseInt(day.day_of_week) : day.day_of_week
       dayCount[dow] = (dayCount[dow] || 0) + 1
     })
 
@@ -288,7 +340,10 @@ export async function getUserStatsByDateRange(userId: string, startDate: string,
     longestStreak = Math.max(longestStreak, tempStreak)
 
     // Calculate average intensity
-    const totalIntensity = sickDays.reduce((sum, day) => sum + parseInt(day.intensity), 0)
+    const totalIntensity = sickDays.reduce((sum, day) => {
+      const intensity = typeof day.intensity === 'string' ? parseInt(day.intensity) : day.intensity
+      return sum + intensity
+    }, 0)
     const averageIntensity = totalSickDays > 0 ? totalIntensity / totalSickDays : 0
 
     return {

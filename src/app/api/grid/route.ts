@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { getUserGridData, getUserGridDataByDateRange, updateGridSquare, ensureUser } from '@/lib/database'
+import { rateLimit } from '@/lib/ratelimit'
 
 export async function GET(request: NextRequest) {
   try {
@@ -49,11 +50,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { date, intensity } = await request.json()
+    // Rate limiting: 30 updates per minute per user
+    if (!rateLimit(session.user.email, 30, 60000)) {
+      return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
+    }
+
+    const body = await request.json()
+    const { date, intensity } = body
+
+    // Validate required fields
+    if (!date || intensity === undefined) {
+      return NextResponse.json({ error: 'Date and intensity are required' }, { status: 400 })
+    }
 
     // Validate intensity
-    if (intensity < 0 || intensity > 4) {
-      return NextResponse.json({ error: 'Invalid intensity value' }, { status: 400 })
+    if (typeof intensity !== 'number' || intensity < 0 || intensity > 4) {
+      return NextResponse.json({ error: 'Intensity must be a number between 0 and 4' }, { status: 400 })
+    }
+
+    // Validate date format (YYYY-MM-DD)
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+    if (!dateRegex.test(date)) {
+      return NextResponse.json({ error: 'Date must be in YYYY-MM-DD format' }, { status: 400 })
+    }
+
+    // Prevent future dates
+    const dateObj = new Date(date)
+    const today = new Date()
+    today.setHours(23, 59, 59, 999)
+    
+    if (dateObj > today) {
+      return NextResponse.json({ error: 'Cannot modify future dates' }, { status: 400 })
     }
 
     // Ensure user exists in database

@@ -186,9 +186,9 @@ const DayGrid: React.FC = () => {
         
         // Create a map of user data
         const userDataMap = new Map(
-          userGridData.map((item: any) => [
+          userGridData.map((item: { date: string; intensity: string | number }) => [
             item.date.split('T')[0], // Extract just the date part (YYYY-MM-DD)
-            parseInt(item.intensity)
+            parseInt(String(item.intensity))
           ])
         );
 
