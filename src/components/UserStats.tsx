@@ -4,12 +4,20 @@ import React from 'react';
 import { useSession } from 'next-auth/react';
 
 interface StatsData {
+  // Overall Stats
   totalSickDays: number;
   percentageOfYear: number;
+  yearToDatePercentage: number;
+  averageIntensity: number;
+  
+  // Pattern Stats
   mostCommonDay: string;
+  recoveryRate: number;
+  
+  // Streak Stats
   currentStreak: number;
   longestStreak: number;
-  averageIntensity: number;
+  averageSickStreak: number;
 }
 
 const UserStats: React.FC = () => {
@@ -18,21 +26,33 @@ const UserStats: React.FC = () => {
   const [loading, setLoading] = React.useState(true);
 
   const generateRolling12Months = () => {
+    // Use consistent timezone handling - always work in local timezone
     const today = new Date();
-    const oneYearAgo = new Date();
-    oneYearAgo.setFullYear(today.getFullYear() - 1);
-    oneYearAgo.setDate(today.getDate() + 1);
+    today.setHours(0, 0, 0, 0); // Normalize to start of day
+    
+    // Calculate exactly 365 days ago (not 1 year ago to avoid leap year issues)
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - 365);
+    
+    // Find the Sunday before or on the start date
+    const firstSunday = new Date(startDate);
+    firstSunday.setDate(firstSunday.getDate() - firstSunday.getDay());
     
     const dates = [];
-    const startDate = new Date(oneYearAgo);
-    startDate.setDate(startDate.getDate() - startDate.getDay());
+    const currentDate = new Date(firstSunday);
     
-    const currentDate = new Date(startDate);
-    while (currentDate <= today || currentDate.getDay() !== 0) {
+    // Generate dates for complete weeks that include today
+    while (currentDate <= today) {
       dates.push(new Date(currentDate));
       currentDate.setDate(currentDate.getDate() + 1);
     }
     
+    // Add remaining days to complete the final week
+    while (dates.length % 7 !== 0) {
+      dates.push(new Date(currentDate));
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
     return dates;
   };
 
@@ -107,42 +127,70 @@ const UserStats: React.FC = () => {
     <div className="bg-white rounded-lg shadow-sm border p-4 sm:p-6">
       <h3 className="text-base sm:text-lg font-semibold text-gray-800 mb-4">Your Statistics (Last 12 Months)</h3>
       
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-        <StatCard 
-          label="Total Sick Days"
-          value={stats.totalSickDays}
-          description="Days with any intensity > 0"
-        />
-        
-        <StatCard 
-          label="Percentage of Year"
-          value={`${stats.percentageOfYear}%`}
-          description="Time spent feeling unwell"
-        />
-        
-        <StatCard 
-          label="Most Common Day"
-          value={stats.mostCommonDay}
-          description="Day of week you're most sick"
-        />
-        
-        <StatCard 
-          label="Current Streak"
-          value={stats.currentStreak}
-          description="Consecutive sick days ending recently"
-        />
-        
-        <StatCard 
-          label="Longest Streak"
-          value={stats.longestStreak}
-          description="Most consecutive sick days"
-        />
-        
-        <StatCard 
-          label="Average Intensity"
-          value={stats.averageIntensity.toFixed(1)}
-          description="Mean intensity when sick (0-4 scale)"
-        />
+      {/* Overall Stats */}
+      <div className="mb-6">
+        <h4 className="text-sm font-medium text-gray-700 mb-3">📊 Overall Stats</h4>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatCard 
+            label="Total Sick Days"
+            value={stats.totalSickDays}
+            description="Days with any intensity > 0"
+          />
+          <StatCard 
+            label="Last 12 Months"
+            value={`${stats.percentageOfYear}%`}
+            description="Percentage of rolling year"
+          />
+          <StatCard 
+            label="Year-to-Date"
+            value={`${stats.yearToDatePercentage}%`}
+            description="Jan 1st to today"
+          />
+          <StatCard 
+            label="Average Intensity"
+            value={stats.averageIntensity.toFixed(1)}
+            description="Mean intensity when sick"
+          />
+        </div>
+      </div>
+
+      {/* Pattern Stats */}
+      <div className="mb-6">
+        <h4 className="text-sm font-medium text-gray-700 mb-3">🔍 Pattern Stats</h4>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <StatCard 
+            label="Most Common Day"
+            value={stats.mostCommonDay}
+            description="Day of week you're sick most"
+          />
+          <StatCard 
+            label="Recovery Rate"
+            value={stats.recoveryRate > 0 ? `${stats.recoveryRate.toFixed(1)} days` : 'N/A'}
+            description="Average days between sick periods"
+          />
+        </div>
+      </div>
+
+      {/* Streak Stats */}
+      <div className="mb-4">
+        <h4 className="text-sm font-medium text-gray-700 mb-3">⚡ Streak Stats</h4>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <StatCard 
+            label="Current Streak"
+            value={stats.currentStreak}
+            description="Consecutive sick days ending now"
+          />
+          <StatCard 
+            label="Longest Streak"
+            value={stats.longestStreak}
+            description="Longest consecutive sick period"
+          />
+          <StatCard 
+            label="Average Streak"
+            value={stats.averageSickStreak > 0 ? stats.averageSickStreak.toFixed(1) : 'N/A'}
+            description="Average length of sick streaks"
+          />
+        </div>
       </div>
 
       <div className="text-xs text-gray-500 mt-4">

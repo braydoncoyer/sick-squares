@@ -111,25 +111,28 @@ const DayGrid: React.FC = () => {
   const [demoTimeout, setDemoTimeout] = React.useState<NodeJS.Timeout | null>(null);
 
   const generateRolling12Months = () => {
+    // Use consistent timezone handling - always work in local timezone
     const today = new Date();
-    const oneYearAgo = new Date();
-    oneYearAgo.setFullYear(today.getFullYear() - 1);
-    oneYearAgo.setDate(today.getDate() + 1); // Start from day after one year ago
-
+    today.setHours(0, 0, 0, 0); // Normalize to start of day
+    
+    // Calculate exactly 365 days ago (not 1 year ago to avoid leap year issues)
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - 365);
+    
+    // Find the Sunday before or on the start date
+    const firstSunday = new Date(startDate);
+    firstSunday.setDate(firstSunday.getDate() - firstSunday.getDay());
+    
     const dates = [];
-
-    // Start from the Sunday before or on the start date
-    const startDate = new Date(oneYearAgo);
-    startDate.setDate(startDate.getDate() - startDate.getDay());
-
-    // Generate dates until we have complete weeks past today
-    const currentDate = new Date(startDate);
-    while (currentDate <= today || currentDate.getDay() !== 0) {
+    const currentDate = new Date(firstSunday);
+    
+    // Generate dates for complete weeks that include today
+    while (currentDate <= today) {
       dates.push(new Date(currentDate));
       currentDate.setDate(currentDate.getDate() + 1);
     }
-
-    // Ensure we have complete weeks (multiples of 7)
+    
+    // Add remaining days to complete the final week
     while (dates.length % 7 !== 0) {
       dates.push(new Date(currentDate));
       currentDate.setDate(currentDate.getDate() + 1);
@@ -142,7 +145,6 @@ const DayGrid: React.FC = () => {
     // Clear any existing demo timeout
     if (demoTimeout) {
       clearTimeout(demoTimeout);
-      setDemoTimeout(null);
     }
 
     // Wait for session to finish loading
@@ -168,7 +170,6 @@ const DayGrid: React.FC = () => {
         }));
         setGridData(demoData);
         setLoading(false);
-        setDemoTimeout(null);
       }, 500);
       setDemoTimeout(timeout);
       return;
@@ -184,17 +185,22 @@ const DayGrid: React.FC = () => {
       if (response.ok) {
         const { gridData: userGridData } = await response.json();
         
-        // Create a map of user data
+        // Create a map of user data with proper date normalization
         const userDataMap = new Map(
-          userGridData.map((item: { date: string; intensity: string | number }) => [
-            item.date.split('T')[0], // Extract just the date part (YYYY-MM-DD)
-            parseInt(String(item.intensity))
-          ])
+          userGridData.map((item: { date: string; intensity: string | number }) => {
+            // Extract date part and normalize
+            const dateKey = item.date.split('T')[0]; // YYYY-MM-DD
+            const intensity = parseInt(String(item.intensity));
+            return [dateKey, intensity];
+          })
         );
 
-        // Merge with user data - this should show real user data, not demo data
+        // Merge with user data - ensure date keys match exactly
         const mergedData = dates.map(date => {
-          const dateKey = date.toISOString().split('T')[0];
+          // Normalize date to YYYY-MM-DD format to match database
+          const normalizedDate = new Date(date);
+          normalizedDate.setHours(0, 0, 0, 0);
+          const dateKey = normalizedDate.toISOString().split('T')[0];
           const intensity = userDataMap.get(dateKey) || 0;
           return { date, intensity };
         });
@@ -241,13 +247,16 @@ const DayGrid: React.FC = () => {
       });
 
       if (response.ok) {
-        // Update local state
+        // Update local state with proper date normalization
         setGridData(prev => 
-          prev.map(item => 
-            item.date.toISOString().split('T')[0] === dateString
+          prev.map(item => {
+            const normalizedDate = new Date(item.date);
+            normalizedDate.setHours(0, 0, 0, 0);
+            const itemDateString = normalizedDate.toISOString().split('T')[0];
+            return itemDateString === dateString
               ? { ...item, intensity: newIntensity }
-              : item
-          )
+              : item;
+          })
         );
       }
     } catch (error) {

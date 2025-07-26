@@ -45,12 +45,20 @@ interface DatabaseStatsRow {
 }
 
 export interface UserStats {
+  // Overall Stats
   totalSickDays: number
-  percentageOfYear: number
+  percentageOfYear: number // Rolling 12 months
+  yearToDatePercentage: number // Jan 1 to today
+  averageIntensity: number
+  
+  // Pattern Stats
   mostCommonDay: string
+  recoveryRate: number // Average days between sick periods
+  
+  // Streak Stats
   currentStreak: number
   longestStreak: number
-  averageIntensity: number
+  averageSickStreak: number
 }
 
 export async function initializeDatabase() {
@@ -192,6 +200,19 @@ export async function getUserStats(userId: string, year: number): Promise<UserSt
     const daysInYear = isLeapYear ? 366 : 365
     const percentageOfYear = (totalSickDays / daysInYear) * 100
 
+    // Calculate year-to-date percentage (Jan 1 to today)
+    const currentYear = new Date().getFullYear()
+    const yearStart = new Date(currentYear, 0, 1)
+    const currentDateForYTD = new Date()
+    const daysIntoYear = Math.floor((currentDateForYTD.getTime() - yearStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+    
+    // For year-to-date, we need current year data only
+    const yearToDateSickDays = year === currentYear ? totalSickDays : sickDays.filter(day => {
+      const dayDate = new Date(day.date)
+      return dayDate.getFullYear() === currentYear
+    }).length
+    const yearToDatePercentage = year === currentYear ? (yearToDateSickDays / daysIntoYear) * 100 : 0
+
     // Find most common day of week
     const dayCount: { [key: number]: number } = {}
     sickDays.forEach(day => {
@@ -209,13 +230,15 @@ export async function getUserStats(userId: string, year: number): Promise<UserSt
       }
     })
 
-    // Calculate streaks
+    // Calculate streaks and advanced stats
     let currentStreak = 0
     let longestStreak = 0
     let tempStreak = 0
+    const streaks: number[] = []
+    const recoveryPeriods: number[] = []
     
     const sortedDates = sickDays.map(d => new Date(d.date)).sort((a, b) => a.getTime() - b.getTime())
-    const today = new Date()
+    const currentDateForStreaks = new Date()
     
     for (let i = 0; i < sortedDates.length; i++) {
       if (i === 0) {
@@ -228,18 +251,41 @@ export async function getUserStats(userId: string, year: number): Promise<UserSt
         if (diffDays === 1) {
           tempStreak++
         } else {
+          // End of a streak
           longestStreak = Math.max(longestStreak, tempStreak)
+          streaks.push(tempStreak)
+          
+          // Record recovery period (gap between streaks)
+          if (diffDays > 1) {
+            recoveryPeriods.push(diffDays - 1)
+          }
+          
           tempStreak = 1
         }
       }
       
       // Check if this is part of current streak (ending today or yesterday)
-      const diffFromToday = Math.floor((today.getTime() - sortedDates[i].getTime()) / (1000 * 60 * 60 * 24))
+      const diffFromToday = Math.floor((currentDateForStreaks.getTime() - sortedDates[i].getTime()) / (1000 * 60 * 60 * 24))
       if (diffFromToday <= 1 && i === sortedDates.length - 1) {
         currentStreak = tempStreak
       }
     }
-    longestStreak = Math.max(longestStreak, tempStreak)
+    
+    // Don't forget the last streak
+    if (sortedDates.length > 0) {
+      longestStreak = Math.max(longestStreak, tempStreak)
+      streaks.push(tempStreak)
+    }
+    
+    // Calculate average sick streak
+    const averageSickStreak = streaks.length > 0 
+      ? streaks.reduce((sum, streak) => sum + streak, 0) / streaks.length 
+      : 0
+    
+    // Calculate recovery rate (average days between sick periods)
+    const recoveryRate = recoveryPeriods.length > 0
+      ? recoveryPeriods.reduce((sum, period) => sum + period, 0) / recoveryPeriods.length
+      : 0
 
     // Calculate average intensity
     const totalIntensity = sickDays.reduce((sum, day) => {
@@ -249,12 +295,20 @@ export async function getUserStats(userId: string, year: number): Promise<UserSt
     const averageIntensity = totalSickDays > 0 ? totalIntensity / totalSickDays : 0
 
     return {
+      // Overall Stats
       totalSickDays,
       percentageOfYear: Math.round(percentageOfYear * 100) / 100,
+      yearToDatePercentage: Math.round(yearToDatePercentage * 100) / 100,
+      averageIntensity: Math.round(averageIntensity * 100) / 100,
+      
+      // Pattern Stats
       mostCommonDay,
+      recoveryRate: Math.round(recoveryRate * 100) / 100,
+      
+      // Streak Stats
       currentStreak,
       longestStreak,
-      averageIntensity: Math.round(averageIntensity * 100) / 100
+      averageSickStreak: Math.round(averageSickStreak * 100) / 100
     }
   } catch (error) {
     console.error('Error calculating user stats:', error)
@@ -281,7 +335,7 @@ export async function getUserStatsByDateRange(userId: string, startDate: string,
       [userId, startDate, endDate]
     )
 
-    const sickDays = dateRangeData.rows
+    const sickDays: DatabaseStatsRow[] = dateRangeData.rows
     const totalSickDays = sickDays.length
     
     // Calculate percentage of the date range (approximately 365 days for rolling 12 months)
@@ -289,6 +343,26 @@ export async function getUserStatsByDateRange(userId: string, startDate: string,
     const end = new Date(endDate)
     const totalDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1
     const percentageOfYear = (totalSickDays / totalDays) * 100
+
+    // Calculate year-to-date percentage for current year
+    const currentYearForRange = new Date().getFullYear()
+    const yearStartForRange = new Date(currentYearForRange, 0, 1)
+    const currentDateForRangeYTD = new Date()
+    const daysIntoYearForRange = Math.floor((currentDateForRangeYTD.getTime() - yearStartForRange.getTime()) / (1000 * 60 * 60 * 24)) + 1
+    
+    // Get current year sick days from the range
+    const currentYearSickDays = await client.query(
+      `SELECT COUNT(*) as count
+       FROM user_grids 
+       WHERE user_id = $1 
+       AND EXTRACT(YEAR FROM date) = $2
+       AND intensity > 0
+       AND date <= CURRENT_DATE`,
+      [userId, currentYearForRange]
+    )
+    
+    const yearToDateSickDaysCount = parseInt(currentYearSickDays.rows[0]?.count || '0')
+    const yearToDatePercentage = (yearToDateSickDaysCount / daysIntoYearForRange) * 100
 
     // Find most common day of week
     const dayCount: { [key: number]: number } = {}
@@ -307,37 +381,62 @@ export async function getUserStatsByDateRange(userId: string, startDate: string,
       }
     })
 
-    // Calculate streaks
+    // Calculate streaks and advanced stats
     let currentStreak = 0
     let longestStreak = 0
     let tempStreak = 0
+    const streaks: number[] = []
+    const recoveryPeriods: number[] = []
     
-    const sortedDates = sickDays.map(d => new Date(d.date)).sort((a, b) => a.getTime() - b.getTime())
-    const today = new Date()
+    const sortedDatesForRange = sickDays.map(d => new Date(d.date)).sort((a, b) => a.getTime() - b.getTime())
+    const currentDateForRangeStreaks = new Date()
     
-    for (let i = 0; i < sortedDates.length; i++) {
+    for (let i = 0; i < sortedDatesForRange.length; i++) {
       if (i === 0) {
         tempStreak = 1
       } else {
-        const prevDate = sortedDates[i - 1]
-        const currDate = sortedDates[i]
+        const prevDate = sortedDatesForRange[i - 1]
+        const currDate = sortedDatesForRange[i]
         const diffDays = Math.floor((currDate.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24))
         
         if (diffDays === 1) {
           tempStreak++
         } else {
+          // End of a streak
           longestStreak = Math.max(longestStreak, tempStreak)
+          streaks.push(tempStreak)
+          
+          // Record recovery period (gap between streaks)
+          if (diffDays > 1) {
+            recoveryPeriods.push(diffDays - 1)
+          }
+          
           tempStreak = 1
         }
       }
       
       // Check if this is part of current streak (ending today or yesterday)
-      const diffFromToday = Math.floor((today.getTime() - sortedDates[i].getTime()) / (1000 * 60 * 60 * 24))
-      if (diffFromToday <= 1 && i === sortedDates.length - 1) {
+      const diffFromToday = Math.floor((currentDateForRangeStreaks.getTime() - sortedDatesForRange[i].getTime()) / (1000 * 60 * 60 * 24))
+      if (diffFromToday <= 1 && i === sortedDatesForRange.length - 1) {
         currentStreak = tempStreak
       }
     }
-    longestStreak = Math.max(longestStreak, tempStreak)
+    
+    // Don't forget the last streak
+    if (sortedDatesForRange.length > 0) {
+      longestStreak = Math.max(longestStreak, tempStreak)
+      streaks.push(tempStreak)
+    }
+    
+    // Calculate average sick streak
+    const averageSickStreak = streaks.length > 0 
+      ? streaks.reduce((sum, streak) => sum + streak, 0) / streaks.length 
+      : 0
+    
+    // Calculate recovery rate (average days between sick periods)
+    const recoveryRate = recoveryPeriods.length > 0
+      ? recoveryPeriods.reduce((sum, period) => sum + period, 0) / recoveryPeriods.length
+      : 0
 
     // Calculate average intensity
     const totalIntensity = sickDays.reduce((sum, day) => {
@@ -347,12 +446,20 @@ export async function getUserStatsByDateRange(userId: string, startDate: string,
     const averageIntensity = totalSickDays > 0 ? totalIntensity / totalSickDays : 0
 
     return {
+      // Overall Stats
       totalSickDays,
       percentageOfYear: Math.round(percentageOfYear * 100) / 100,
+      yearToDatePercentage: Math.round(yearToDatePercentage * 100) / 100,
+      averageIntensity: Math.round(averageIntensity * 100) / 100,
+      
+      // Pattern Stats
       mostCommonDay,
+      recoveryRate: Math.round(recoveryRate * 100) / 100,
+      
+      // Streak Stats
       currentStreak,
       longestStreak,
-      averageIntensity: Math.round(averageIntensity * 100) / 100
+      averageSickStreak: Math.round(averageSickStreak * 100) / 100
     }
   } catch (error) {
     console.error('Error calculating user stats by date range:', error)
