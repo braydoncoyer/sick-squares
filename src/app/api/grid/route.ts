@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
-import { getUserGridData, updateGridSquare, ensureUser } from '@/lib/database'
+import { getUserGridData, getUserGridDataByDateRange, updateGridSquare, ensureUser } from '@/lib/database'
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,7 +11,9 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url)
-    const year = parseInt(searchParams.get('year') || new Date().getFullYear().toString())
+    const startDate = searchParams.get('startDate')
+    const endDate = searchParams.get('endDate')
+    const year = searchParams.get('year')
 
     // Ensure user exists in database
     await ensureUser({
@@ -21,7 +23,16 @@ export async function GET(request: NextRequest) {
       image: session.user.image || undefined
     })
 
-    const gridData = await getUserGridData(session.user.email, year)
+    let gridData
+    if (startDate && endDate) {
+      // Use date range query for rolling 12 months
+      gridData = await getUserGridDataByDateRange(session.user.email, startDate, endDate)
+    } else if (year) {
+      // Use year query for backward compatibility
+      gridData = await getUserGridData(session.user.email, parseInt(year))
+    } else {
+      return NextResponse.json({ error: 'Either year or date range (startDate and endDate) is required' }, { status: 400 })
+    }
     
     return NextResponse.json({ gridData })
   } catch (error) {

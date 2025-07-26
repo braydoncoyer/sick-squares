@@ -3,10 +3,6 @@
 import React from 'react';
 import { useSession } from 'next-auth/react';
 
-interface UserStatsProps {
-  year?: number;
-}
-
 interface StatsData {
   totalSickDays: number;
   percentageOfYear: number;
@@ -16,10 +12,29 @@ interface StatsData {
   averageIntensity: number;
 }
 
-const UserStats: React.FC<UserStatsProps> = ({ year = new Date().getFullYear() }) => {
+const UserStats: React.FC = () => {
   const { data: session } = useSession();
   const [stats, setStats] = React.useState<StatsData | null>(null);
   const [loading, setLoading] = React.useState(true);
+
+  const generateRolling12Months = () => {
+    const today = new Date();
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(today.getFullYear() - 1);
+    oneYearAgo.setDate(today.getDate() + 1);
+    
+    const dates = [];
+    const startDate = new Date(oneYearAgo);
+    startDate.setDate(startDate.getDate() - startDate.getDay());
+    
+    const currentDate = new Date(startDate);
+    while (currentDate <= today || currentDate.getDay() !== 0) {
+      dates.push(new Date(currentDate));
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+    
+    return dates;
+  };
 
   React.useEffect(() => {
     const loadStats = async () => {
@@ -29,7 +44,11 @@ const UserStats: React.FC<UserStatsProps> = ({ year = new Date().getFullYear() }
       }
 
       try {
-        const response = await fetch(`/api/stats?year=${year}`);
+        const dates = generateRolling12Months();
+        const startDate = dates[0].toISOString().split('T')[0];
+        const endDate = dates[dates.length - 1].toISOString().split('T')[0];
+        
+        const response = await fetch(`/api/stats?startDate=${startDate}&endDate=${endDate}`);
         if (response.ok) {
           const { stats: userStats } = await response.json();
           setStats(userStats);
@@ -41,21 +60,21 @@ const UserStats: React.FC<UserStatsProps> = ({ year = new Date().getFullYear() }
     };
 
     loadStats();
-  }, [session?.user?.email, year]);
+  }, [session?.user?.email]);
 
   if (!session?.user?.email) {
     return (
-      <div className="bg-gray-50 rounded-lg p-6 text-center">
-        <h3 className="text-lg font-semibold text-gray-800 mb-2">Sign in to track your stats</h3>
-        <p className="text-gray-600">Login with GitHub to save your data and see personalized statistics.</p>
+      <div className="bg-white rounded-lg shadow-sm border p-4 sm:p-6 text-center">
+        <h3 className="text-base sm:text-lg font-semibold text-gray-800 mb-2">Sign in to track your stats</h3>
+        <p className="text-sm text-gray-600">Login with GitHub to save your data and see personalized statistics.</p>
       </div>
     );
   }
 
   if (loading) {
     return (
-      <div className="bg-gray-50 rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4">Your {year} Statistics</h3>
+      <div className="bg-white rounded-lg shadow-sm border p-4 sm:p-6">
+        <h3 className="text-base sm:text-lg font-semibold text-gray-800 mb-4">Your Statistics (Last 12 Months)</h3>
         <div className="text-gray-500">Loading stats...</div>
       </div>
     );
@@ -63,8 +82,8 @@ const UserStats: React.FC<UserStatsProps> = ({ year = new Date().getFullYear() }
 
   if (!stats) {
     return (
-      <div className="bg-gray-50 rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4">Your {year} Statistics</h3>
+      <div className="bg-white rounded-lg shadow-sm border p-4 sm:p-6">
+        <h3 className="text-base sm:text-lg font-semibold text-gray-800 mb-4">Your Statistics (Last 12 Months)</h3>
         <div className="text-gray-500">No data available</div>
       </div>
     );
@@ -85,8 +104,8 @@ const UserStats: React.FC<UserStatsProps> = ({ year = new Date().getFullYear() }
   );
 
   return (
-    <div className="bg-gray-50 rounded-lg p-6">
-      <h3 className="text-lg font-semibold text-gray-800 mb-4">Your {year} Statistics</h3>
+    <div className="bg-white rounded-lg shadow-sm border p-4 sm:p-6">
+      <h3 className="text-base sm:text-lg font-semibold text-gray-800 mb-4">Your Statistics (Last 12 Months)</h3>
       
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
         <StatCard 

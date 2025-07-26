@@ -8,9 +8,11 @@ interface DaySquareProps {
   intensity: number; // 0-4 intensity levels like GitHub
   onIntensityChange?: (date: string, newIntensity: number) => void;
   isClickable?: boolean;
+  isOutsideYear?: boolean;
+  isLoading?: boolean;
 }
 
-const DaySquare: React.FC<DaySquareProps> = ({ date, intensity, onIntensityChange, isClickable = false }) => {
+const DaySquare: React.FC<DaySquareProps> = ({ date, intensity, onIntensityChange, isClickable = false, isOutsideYear = false, isLoading = false }) => {
   const formatDate = (date: Date) => {
     return date.toLocaleDateString('en-US', {
       weekday: 'short',
@@ -20,7 +22,32 @@ const DaySquare: React.FC<DaySquareProps> = ({ date, intensity, onIntensityChang
     });
   };
 
+  const isFutureDate = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Set to start of today
+    const checkDate = new Date(date);
+    checkDate.setHours(0, 0, 0, 0); // Set to start of the date to check
+    return checkDate > today;
+  };
+
+  const isFuture = isFutureDate();
+
   const getIntensityClass = (intensity: number) => {
+    if (isLoading) {
+      // Show disabled state while loading
+      return 'bg-gray-50 border-gray-150 opacity-50 animate-pulse';
+    }
+    
+    if (isFuture) {
+      // Gray out future dates
+      return 'bg-gray-50 border-gray-150 opacity-30';
+    }
+    
+    if (isOutsideYear) {
+      // Gray out dates outside the target year
+      return 'bg-gray-50 border-gray-150 opacity-40';
+    }
+    
     switch (intensity) {
       case 0:
         return 'bg-gray-100 border-gray-200';
@@ -38,7 +65,7 @@ const DaySquare: React.FC<DaySquareProps> = ({ date, intensity, onIntensityChang
   };
 
   const handleClick = () => {
-    if (isClickable && onIntensityChange) {
+    if (isClickable && onIntensityChange && !isOutsideYear && !isLoading && !isFuture) {
       const dateString = date.toISOString().split('T')[0]; // YYYY-MM-DD format
       const newIntensity = (intensity + 1) % 5; // Cycle 0->1->2->3->4->0
       onIntensityChange(dateString, newIntensity);
@@ -50,15 +77,26 @@ const DaySquare: React.FC<DaySquareProps> = ({ date, intensity, onIntensityChang
       <div
         className={`w-3 h-3 border rounded-sm ${getIntensityClass(
           intensity
-        )} hover:border-gray-400 transition-colors ${
-          isClickable ? 'cursor-pointer' : 'cursor-default'
+        )} transition-colors ${
+          isClickable && !isOutsideYear && !isLoading && !isFuture
+            ? 'cursor-pointer hover:border-gray-400' 
+            : 'cursor-default'
         }`}
         onClick={handleClick}
       />
       <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
         {formatDate(date)}
-        {isClickable && (
+        {isLoading && (
+          <div className="text-xs opacity-75">Loading...</div>
+        )}
+        {isFuture && (
+          <div className="text-xs opacity-75">Future date - cannot modify</div>
+        )}
+        {!isLoading && !isFuture && isClickable && !isOutsideYear && (
           <div className="text-xs opacity-75">Click to change intensity</div>
+        )}
+        {isOutsideYear && (
+          <div className="text-xs opacity-75">Outside target year</div>
         )}
         <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
       </div>
@@ -66,83 +104,126 @@ const DaySquare: React.FC<DaySquareProps> = ({ date, intensity, onIntensityChang
   );
 };
 
-interface DayGridProps {
-  year?: number;
-}
-
-const DayGrid: React.FC<DayGridProps> = ({ year = new Date().getFullYear() }) => {
-  const { data: session } = useSession();
+const DayGrid: React.FC = () => {
+  const { data: session, status } = useSession();
   const [gridData, setGridData] = React.useState<{ date: Date; intensity: number }[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [demoTimeout, setDemoTimeout] = React.useState<NodeJS.Timeout | null>(null);
 
-  const generateYearDates = (year: number) => {
-    const startDate = new Date(year, 0, 1);
-    const endDate = new Date(year, 11, 31);
+  const generateRolling12Months = () => {
+    const today = new Date();
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(today.getFullYear() - 1);
+    oneYearAgo.setDate(today.getDate() + 1); // Start from day after one year ago
+
     const dates = [];
 
-    // Start from the Sunday before the first day of the year
-    const firstSunday = new Date(startDate);
-    firstSunday.setDate(startDate.getDate() - startDate.getDay());
+    // Start from the Sunday before or on the start date
+    const startDate = new Date(oneYearAgo);
+    startDate.setDate(startDate.getDate() - startDate.getDay());
 
-    // Generate all days until we cover the entire year
-    const currentDate = new Date(firstSunday);
-    while (currentDate <= endDate || currentDate.getDay() !== 0 || dates.length < 53 * 7) {
+    // Generate dates until we have complete weeks past today
+    const currentDate = new Date(startDate);
+    while (currentDate <= today || currentDate.getDay() !== 0) {
       dates.push(new Date(currentDate));
       currentDate.setDate(currentDate.getDate() + 1);
-      
-      // Break if we have enough weeks and we're past the year
-      if (dates.length >= 53 * 7 && currentDate.getFullYear() > year) {
-        break;
-      }
+    }
+
+    // Ensure we have complete weeks (multiples of 7)
+    while (dates.length % 7 !== 0) {
+      dates.push(new Date(currentDate));
+      currentDate.setDate(currentDate.getDate() + 1);
     }
 
     return dates;
   };
 
   const loadGridData = React.useCallback(async () => {
-    if (!session?.user?.email) {
-      // If not logged in, show demo data
-      const dates = generateYearDates(year);
-      const demoData = dates.map(date => ({
-        date,
-        intensity: Math.floor(Math.random() * 5), // Random intensity for demo
-      }));
-      setGridData(demoData);
-      setLoading(false);
+    // Clear any existing demo timeout
+    if (demoTimeout) {
+      clearTimeout(demoTimeout);
+      setDemoTimeout(null);
+    }
+
+    // Wait for session to finish loading
+    if (status === 'loading') {
       return;
     }
 
+    const dates = generateRolling12Months();
+    
+    // Always start with empty grid
+    const emptyData = dates.map(date => ({
+      date,
+      intensity: 0, // Start with empty squares
+    }));
+    setGridData(emptyData);
+
+    if (status === 'unauthenticated' || !session?.user?.email) {
+      // If not logged in, show demo data after a brief moment
+      const timeout = setTimeout(() => {
+        const demoData = dates.map(date => ({
+          date,
+          intensity: Math.floor(Math.random() * 5), // Random intensity for demo
+        }));
+        setGridData(demoData);
+        setLoading(false);
+        setDemoTimeout(null);
+      }, 500);
+      setDemoTimeout(timeout);
+      return;
+    }
+
+    // For logged-in users, fetch their real data
     try {
-      const response = await fetch(`/api/grid?year=${year}`);
+      // Get the date range for the API call
+      const startDate = dates[0].toISOString().split('T')[0];
+      const endDate = dates[dates.length - 1].toISOString().split('T')[0];
+      
+      const response = await fetch(`/api/grid?startDate=${startDate}&endDate=${endDate}`);
       if (response.ok) {
         const { gridData: userGridData } = await response.json();
         
         // Create a map of user data
         const userDataMap = new Map(
           userGridData.map((item: any) => [
-            item.date,
+            item.date.split('T')[0], // Extract just the date part (YYYY-MM-DD)
             parseInt(item.intensity)
           ])
         );
 
-        // Generate all dates for the year and merge with user data
-        const dates = generateYearDates(year);
-        const mergedData = dates.map(date => ({
-          date,
-          intensity: userDataMap.get(date.toISOString().split('T')[0]) || 0,
-        }));
+        // Merge with user data - this should show real user data, not demo data
+        const mergedData = dates.map(date => {
+          const dateKey = date.toISOString().split('T')[0];
+          const intensity = userDataMap.get(dateKey) || 0;
+          return { date, intensity };
+        });
 
         setGridData(mergedData);
+        setLoading(false);
+      } else {
+        // If API call fails, keep the empty grid
+        setLoading(false);
       }
     } catch (error) {
       console.error('Error loading grid data:', error);
+      // If API call fails, keep the empty grid
+      setLoading(false);
     }
-    setLoading(false);
-  }, [session?.user?.email, year]);
+  }, [session?.user?.email, status, demoTimeout]);
 
   React.useEffect(() => {
     loadGridData();
   }, [loadGridData]);
+
+  // Cleanup effect to clear timeouts on unmount
+  React.useEffect(() => {
+    return () => {
+      if (demoTimeout) {
+        clearTimeout(demoTimeout);
+      }
+    };
+  }, [demoTimeout]);
 
   const handleIntensityChange = async (dateString: string, newIntensity: number) => {
     if (!session?.user?.email) return;
@@ -190,57 +271,81 @@ const DayGrid: React.FC<DayGridProps> = ({ year = new Date().getFullYear() }) =>
     weeks.push(days.slice(i, i + 7));
   }
 
-  const monthLabels = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-  ];
-
   const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+  // Generate month labels based on the actual grid data  
+  const generateMonthLabels = () => {
+    if (weeks.length === 0) return [];
+    
+    const labels: { month: string; position: number }[] = [];
+    let currentMonth = -1;
+    
+    weeks.forEach((week, weekIndex) => {
+      // Check the first day of each week
+      const firstDay = week[0];
+      if (firstDay && firstDay.date.getMonth() !== currentMonth) {
+        currentMonth = firstDay.date.getMonth();
+        const monthName = firstDay.date.toLocaleDateString('en-US', { month: 'short' });
+        labels.push({ month: monthName, position: weekIndex });
+      }
+    });
+    
+    return labels;
+  };
+
+  const monthLabels = generateMonthLabels();
+
   return (
-    <div className="p-4">
-      <div className="flex flex-col gap-2">
-        {/* Month labels */}
-        <div className="flex gap-1 ml-8">
-          {monthLabels.map((month, index) => (
-            <div
-              key={month}
-              className="text-xs text-gray-600 flex-1 text-left"
-              style={{ minWidth: `${100 / 12}%` }}
-            >
-              {month}
+    <div className="w-full">
+      {/* Container with horizontal scroll */}
+      <div className="overflow-x-auto pb-2">
+        <div className="min-w-max p-4">
+          <div className="flex flex-col gap-2">
+            {/* Month labels positioned over actual weeks */}
+            <div className="flex gap-1 ml-8 relative h-4">
+              {monthLabels.map((label, index) => (
+                <div
+                  key={`${label.month}-${index}`}
+                  className="text-xs text-gray-600 absolute whitespace-nowrap"
+                  style={{ left: `${label.position * 16}px` }}
+                >
+                  {label.month}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
 
-        <div className="flex gap-1">
-          {/* Day of week labels */}
-          <div className="flex flex-col gap-1 mr-2">
-            {dayLabels.map((day, index) => (
-              <div
-                key={day}
-                className="text-xs text-gray-600 h-3 flex items-center"
-              >
-                {index % 2 === 1 ? day : ''}
-              </div>
-            ))}
-          </div>
-
-          {/* Grid of days */}
-          <div className="flex gap-1">
-            {weeks.map((week, weekIndex) => (
-              <div key={weekIndex} className="flex flex-col gap-1">
-                {week.map((day, dayIndex) => (
-                  <DaySquare
-                    key={`${weekIndex}-${dayIndex}`}
-                    date={day.date}
-                    intensity={day.intensity}
-                    onIntensityChange={handleIntensityChange}
-                    isClickable={!!session?.user?.email}
-                  />
+            <div className="flex gap-1">
+              {/* Day of week labels - fixed width to prevent shifting */}
+              <div className="flex flex-col gap-1 mr-2 flex-shrink-0">
+                {dayLabels.map((day, index) => (
+                  <div
+                    key={day}
+                    className="text-xs text-gray-600 h-3 flex items-center w-6 text-right"
+                  >
+                    {index % 2 === 1 ? day : ''}
+                  </div>
                 ))}
               </div>
-            ))}
+
+              {/* Grid of days - scrollable content */}
+              <div className="flex gap-1 min-w-max">
+                {weeks.map((week, weekIndex) => (
+                  <div key={weekIndex} className="flex flex-col gap-1">
+                    {week.map((day, dayIndex) => (
+                      <DaySquare
+                        key={`${weekIndex}-${dayIndex}`}
+                        date={day.date}
+                        intensity={day.intensity}
+                        onIntensityChange={handleIntensityChange}
+                        isClickable={!!session?.user?.email}
+                        isOutsideYear={false}
+                        isLoading={loading}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>
