@@ -142,24 +142,12 @@ const DayGrid: React.FC = () => {
   };
 
   const loadGridData = React.useCallback(async () => {
-    // Clear any existing demo timeout
-    if (demoTimeout) {
-      clearTimeout(demoTimeout);
-    }
-
     // Wait for session to finish loading
     if (status === 'loading') {
       return;
     }
 
     const dates = generateRolling12Months();
-    
-    // Always start with empty grid
-    const emptyData = dates.map(date => ({
-      date,
-      intensity: 0, // Start with empty squares
-    }));
-    setGridData(emptyData);
 
     if (status === 'unauthenticated' || !session?.user?.email) {
       // If not logged in, show demo data after a brief moment
@@ -174,6 +162,13 @@ const DayGrid: React.FC = () => {
       setDemoTimeout(timeout);
       return;
     }
+    
+    // Always start with empty grid for authenticated users
+    const emptyData = dates.map(date => ({
+      date,
+      intensity: 0, // Start with empty squares
+    }));
+    setGridData(emptyData);
 
     // For logged-in users, fetch their real data
     try {
@@ -216,7 +211,7 @@ const DayGrid: React.FC = () => {
       // If API call fails, keep the empty grid
       setLoading(false);
     }
-  }, [session?.user?.email, status, demoTimeout]);
+  }, [session?.user?.email, status]);
 
   React.useEffect(() => {
     loadGridData();
