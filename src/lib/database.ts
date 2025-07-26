@@ -34,6 +34,8 @@ interface DatabaseUser {
   email: string
   name?: string
   image?: string
+  username?: string
+  is_public?: boolean
   created_at: string | Date
   updated_at: string | Date
 }
@@ -71,9 +73,18 @@ export async function initializeDatabase() {
         email TEXT UNIQUE,
         name TEXT,
         image TEXT,
+        username TEXT UNIQUE,
+        is_public BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )
+    `)
+
+    // Add new columns to existing users table if they don't exist
+    await client.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS username TEXT UNIQUE,
+      ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT FALSE
     `)
 
     // Create user_grids table if it doesn't exist
@@ -472,19 +483,152 @@ export async function getUserStatsByDateRange(userId: string, startDate: string,
 export async function ensureUser(user: { id: string; email?: string; name?: string; image?: string }) {
   const client = await pool.connect()
   try {
+    // Generate username from email if not exists
+    let username = null
+    if (user.email) {
+      username = user.email.split('@')[0].toLowerCase().replace(/[^a-z0-9-]/g, '-')
+    }
+
+    // First, try to find existing user by email
+    if (user.email) {
+      const existingUser = await client.query(
+        'SELECT id FROM users WHERE email = $1',
+        [user.email]
+      )
+      
+      if (existingUser.rows.length > 0) {
+        const existingId = existingUser.rows[0].id
+        
+        // If the existing user has a different ID, we need to migrate data
+        if (existingId !== user.id) {
+          await client.query('BEGIN')
+          
+          try {
+            // First, create the new user record
+            await client.query(
+              `INSERT INTO users (id, email, name, image, username, is_public, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, FALSE, NOW(), NOW())
+               ON CONFLICT (id) DO NOTHING`,
+              [user.id, null, user.name || null, user.image || null, username]
+            )
+            
+            // Copy all grid data to the new user ID
+            await client.query(
+              `INSERT INTO user_grids (user_id, date, intensity, created_at, updated_at)
+               SELECT $1, date, intensity, created_at, updated_at 
+               FROM user_grids 
+               WHERE user_id = $2
+               ON CONFLICT (user_id, date) DO NOTHING`,
+              [user.id, existingId]
+            )
+            
+            // Delete old grid data
+            await client.query(
+              'DELETE FROM user_grids WHERE user_id = $1',
+              [existingId]
+            )
+            
+            // Delete old user record
+            await client.query(
+              'DELETE FROM users WHERE id = $1',
+              [existingId]
+            )
+            
+            // Update the new user record with the email and other info
+            await client.query(
+              `UPDATE users SET 
+                 email = $2,
+                 name = COALESCE($3, users.name),
+                 image = COALESCE($4, users.image),
+                 username = COALESCE(users.username, $5),
+                 updated_at = NOW()
+               WHERE id = $1`,
+              [user.id, user.email, user.name || null, user.image || null, username]
+            )
+            
+            await client.query('COMMIT')
+            return
+          } catch (error) {
+            await client.query('ROLLBACK')
+            throw error
+          }
+        } else {
+          // User exists with same ID, just update their info
+          await client.query(
+            `UPDATE users SET 
+               name = COALESCE($2, users.name),
+               image = COALESCE($3, users.image),
+               username = COALESCE(users.username, $4),
+               updated_at = NOW()
+             WHERE id = $1`,
+            [user.id, user.name || null, user.image || null, username]
+          )
+          return
+        }
+      }
+    }
+
+    // If no existing user, insert normally
     await client.query(
-      `INSERT INTO users (id, email, name, image)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO users (id, email, name, image, username)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (id) 
        DO UPDATE SET 
          email = COALESCE($2, users.email),
          name = COALESCE($3, users.name),
          image = COALESCE($4, users.image),
+         username = COALESCE(users.username, $5),
          updated_at = NOW()`,
-      [user.id, user.email || null, user.name || null, user.image || null]
+      [user.id, user.email || null, user.name || null, user.image || null, username]
     )
   } catch (error) {
     console.error('Error ensuring user exists:', error)
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export async function getUserByUsername(username: string) {
+  const client = await pool.connect()
+  try {
+    const result = await client.query(
+      'SELECT id, email, name, image, username, is_public FROM users WHERE username = $1',
+      [username]
+    )
+    return result.rows[0] || null
+  } catch (error) {
+    console.error('Error fetching user by username:', error)
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export async function updateUserPrivacy(userId: string, isPublic: boolean) {
+  const client = await pool.connect()
+  try {
+    await client.query(
+      'UPDATE users SET is_public = $1, updated_at = NOW() WHERE id = $2',
+      [isPublic, userId]
+    )
+  } catch (error) {
+    console.error('Error updating user privacy:', error)
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export async function updateUsername(userId: string, newUsername: string) {
+  const client = await pool.connect()
+  try {
+    await client.query(
+      'UPDATE users SET username = $1, updated_at = NOW() WHERE id = $2',
+      [newUsername, userId]
+    )
+  } catch (error) {
+    console.error('Error updating username:', error)
     throw error
   } finally {
     client.release()

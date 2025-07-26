@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 import { getUserGridData, getUserGridDataByDateRange, updateGridSquare, ensureUser } from '@/lib/database'
 import { rateLimit } from '@/lib/ratelimit'
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession()
+    const session = await getServerSession(authOptions)
     
     if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -16,9 +17,11 @@ export async function GET(request: NextRequest) {
     const endDate = searchParams.get('endDate')
     const year = searchParams.get('year')
 
+    const userId = session.user.id || session.user.email
+
     // Ensure user exists in database
     await ensureUser({
-      id: session.user.email,
+      id: userId,
       email: session.user.email,
       name: session.user.name || undefined,
       image: session.user.image || undefined
@@ -27,10 +30,10 @@ export async function GET(request: NextRequest) {
     let gridData
     if (startDate && endDate) {
       // Use date range query for rolling 12 months
-      gridData = await getUserGridDataByDateRange(session.user.email, startDate, endDate)
+      gridData = await getUserGridDataByDateRange(userId, startDate, endDate)
     } else if (year) {
       // Use year query for backward compatibility
-      gridData = await getUserGridData(session.user.email, parseInt(year))
+      gridData = await getUserGridData(userId, parseInt(year))
     } else {
       return NextResponse.json({ error: 'Either year or date range (startDate and endDate) is required' }, { status: 400 })
     }
@@ -44,14 +47,16 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession()
+    const session = await getServerSession(authOptions)
     
     if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const userId = session.user.id || session.user.email
+
     // Rate limiting: 30 updates per minute per user
-    if (!rateLimit(session.user.email, 30, 60000)) {
+    if (!rateLimit(userId, 30, 60000)) {
       return NextResponse.json({ error: 'Too many requests' }, { status: 429 })
     }
 
@@ -85,13 +90,13 @@ export async function POST(request: NextRequest) {
 
     // Ensure user exists in database
     await ensureUser({
-      id: session.user.email,
+      id: userId,
       email: session.user.email,
       name: session.user.name || undefined,
       image: session.user.image || undefined
     })
 
-    const updatedSquare = await updateGridSquare(session.user.email, date, intensity)
+    const updatedSquare = await updateGridSquare(userId, date, intensity)
     
     return NextResponse.json({ square: updatedSquare })
   } catch (error) {

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 import { getUserStats, getUserStatsByDateRange, ensureUser } from '@/lib/database'
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession()
+    const session = await getServerSession(authOptions)
     
     if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -15,9 +16,11 @@ export async function GET(request: NextRequest) {
     const endDate = searchParams.get('endDate')
     const year = searchParams.get('year')
 
+    const userId = session.user.id || session.user.email
+
     // Ensure user exists in database
     await ensureUser({
-      id: session.user.email,
+      id: userId,
       email: session.user.email,
       name: session.user.name || undefined,
       image: session.user.image || undefined
@@ -26,10 +29,10 @@ export async function GET(request: NextRequest) {
     let stats
     if (startDate && endDate) {
       // Use date range query for rolling 12 months
-      stats = await getUserStatsByDateRange(session.user.email, startDate, endDate)
+      stats = await getUserStatsByDateRange(userId, startDate, endDate)
     } else if (year) {
       // Use year query for backward compatibility
-      stats = await getUserStats(session.user.email, parseInt(year))
+      stats = await getUserStats(userId, parseInt(year))
     } else {
       return NextResponse.json({ error: 'Either year or date range (startDate and endDate) is required' }, { status: 400 })
     }

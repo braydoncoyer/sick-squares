@@ -104,7 +104,12 @@ const DaySquare: React.FC<DaySquareProps> = ({ date, intensity, onIntensityChang
   );
 };
 
-const DayGrid: React.FC = () => {
+interface DayGridProps {
+  readOnly?: boolean;
+  initialData?: { date: string; intensity: number }[];
+}
+
+const DayGrid: React.FC<DayGridProps> = ({ readOnly = false, initialData }) => {
   const { data: session, status } = useSession();
   const [gridData, setGridData] = React.useState<{ date: Date; intensity: number }[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -142,12 +147,31 @@ const DayGrid: React.FC = () => {
   };
 
   const loadGridData = React.useCallback(async () => {
+    const dates = generateRolling12Months();
+
+    // If we have initial data (for read-only mode), use it
+    if (readOnly && initialData) {
+      const userDataMap = new Map(
+        initialData.map(item => [item.date, item.intensity])
+      );
+
+      const mergedData = dates.map(date => {
+        const normalizedDate = new Date(date);
+        normalizedDate.setHours(0, 0, 0, 0);
+        const dateKey = normalizedDate.toISOString().split('T')[0];
+        const intensity = userDataMap.get(dateKey) ?? 0;
+        return { date, intensity };
+      });
+
+      setGridData(mergedData);
+      setLoading(false);
+      return;
+    }
+
     // Wait for session to finish loading
     if (status === 'loading') {
       return;
     }
-
-    const dates = generateRolling12Months();
 
     if (status === 'unauthenticated' || !session?.user?.email) {
       // If not logged in, show demo data after a brief moment
@@ -181,7 +205,7 @@ const DayGrid: React.FC = () => {
         const { gridData: userGridData } = await response.json();
         
         // Create a map of user data with proper date normalization
-        const userDataMap = new Map(
+        const userDataMap = new Map<string, number>(
           userGridData.map((item: { date: string; intensity: string | number }) => {
             // Extract date part and normalize
             const dateKey = item.date.split('T')[0]; // YYYY-MM-DD
@@ -196,7 +220,7 @@ const DayGrid: React.FC = () => {
           const normalizedDate = new Date(date);
           normalizedDate.setHours(0, 0, 0, 0);
           const dateKey = normalizedDate.toISOString().split('T')[0];
-          const intensity = userDataMap.get(dateKey) || 0;
+          const intensity = userDataMap.get(dateKey) ?? 0;
           return { date, intensity };
         });
 
@@ -211,7 +235,7 @@ const DayGrid: React.FC = () => {
       // If API call fails, keep the empty grid
       setLoading(false);
     }
-  }, [session?.user?.email, status]);
+  }, [session?.user?.email, status, readOnly, initialData]);
 
   React.useEffect(() => {
     loadGridData();
@@ -268,7 +292,7 @@ const DayGrid: React.FC = () => {
   }
 
   const days = gridData;
-  const weeks = [];
+  const weeks: { date: Date; intensity: number }[][] = [];
 
   // Group days into weeks
   for (let i = 0; i < days.length; i += 7) {
@@ -341,7 +365,7 @@ const DayGrid: React.FC = () => {
                         date={day.date}
                         intensity={day.intensity}
                         onIntensityChange={handleIntensityChange}
-                        isClickable={!!session?.user?.email}
+                        isClickable={!readOnly && !!session?.user?.email}
                         isOutsideYear={false}
                         isLoading={loading}
                       />

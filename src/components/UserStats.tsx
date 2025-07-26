@@ -84,9 +84,32 @@ const UserStats: React.FC = () => {
 
   if (!session?.user?.email) {
     return (
-      <div className="bg-white rounded-lg shadow-sm border p-4 sm:p-6 text-center">
-        <h3 className="text-base sm:text-lg font-semibold text-gray-800 mb-2">Sign in to track your stats</h3>
-        <p className="text-sm text-gray-600">Login with GitHub to save your data and see personalized statistics.</p>
+      <div className="bg-white rounded-lg shadow-sm border p-4 sm:p-6">
+        <h3 className="text-base sm:text-lg font-semibold text-gray-800 mb-4">Your Health Journey Matters</h3>
+        
+        <div className="space-y-4 text-sm text-gray-600">
+          <p>
+            While tracking sick days might seem like dwelling on the negative, SickSquares helps you see the bigger picture. 
+            Every square represents not just a day you felt unwell, but a day you persevered through challenges.
+          </p>
+          
+          <p>
+            When you look back at your health data over months and years, you discover patterns that help you make better 
+            choices. You see your resilience visualized—how you bounced back from illness, how your recovery improved, 
+            and how much strength you showed just by showing up.
+          </p>
+          
+          <p>
+            Your data becomes a testament to your endurance and a tool for understanding your health better. 
+            Each visualization tells the story of someone who kept going, even on the hardest days.
+          </p>
+        </div>
+
+        <div className="mt-6 pt-4 border-t border-gray-100">
+          <p className="text-xs text-gray-500 text-center">
+            Sign in with GitHub to start tracking your journey and unlock personalized insights.
+          </p>
+        </div>
       </div>
     );
   }
